@@ -50,44 +50,240 @@ printint(int xx, int base, int sign)
 }
 //PAGEBREAK: 50
 
+void printspaces(int n)
+{
+  while (n-- > 0)
+  {
+    consputc(' ');
+  }
+}
+
+char *int2str(int value, char *str, int base)
+{
+  char *ptr = str;
+  char *ptr1 = str;
+  char tmp_char;
+  int tmp_value;
+
+  do
+  {
+    tmp_value = value;
+    value /= base;
+    *ptr++ = "0123456789abcdef"[tmp_value - value * base];
+  } while (value);
+
+  // Apply negative sign for negative numbers
+  if (tmp_value < 0)
+  {
+    *ptr++ = '-';
+  }
+  *ptr-- = '\0';
+
+  // Reverse the string
+  while (ptr1 < ptr)
+  {
+    tmp_char = *ptr;
+    *ptr-- = *ptr1;
+    *ptr1++ = tmp_char;
+  }
+
+  return str;
+}
+
+void uint2str(unsigned int value, char *buffer, int base)
+{
+  static char digits[] = "0123456789ABCDEF";
+  char *ptr = buffer;
+  unsigned int num = value;
+
+  // Edge case: value is 0
+  if (value == 0)
+  {
+    *ptr++ = '0';
+    *ptr = '\0';
+    return;
+  }
+
+  // Convert the number to the appropriate base (e.g., 10 for decimal, 16 for hexadecimal)
+  while (num > 0)
+  {
+    *ptr++ = digits[num % base];
+    num /= base;
+  }
+
+  *ptr = '\0';
+
+  // Reverse the string, since the conversion process produces digits in reverse order
+  char *start = buffer;
+  char *end = ptr - 1;
+  char tmp;
+
+  while (start < end)
+  {
+    tmp = *start;
+    *start = *end;
+    *end = tmp;
+
+    start++;
+    end--;
+  }
+}
+
+void uint64_to_str(unsigned int high, unsigned int low, char *buffer, int base)
+{
+  static char digits[] = "0123456789ABCDEF";
+  char *ptr = buffer;
+
+  // Edge case: both high and low are 0
+  if (high == 0 && low == 0)
+  {
+    *ptr++ = '0';
+    *ptr = '\0';
+    return;
+  }
+
+  // Handle the low 32 bits
+  unsigned int num = low;
+  while (num > 0)
+  {
+    *ptr++ = digits[num % base];
+    num /= base;
+  }
+
+  // Handle the high 32 bits (if they exist)
+  num = high;
+  while (num > 0)
+  {
+    *ptr++ = digits[num % base];
+    num /= base;
+  }
+
+  *ptr = '\0';
+
+  // Reverse the string, since the conversion process produces digits in reverse order
+  char *start = buffer;
+  char *end = ptr - 1;
+  char tmp;
+
+  while (start < end)
+  {
+    tmp = *start;
+    *start = *end;
+    *end = tmp;
+
+    start++;
+    end--;
+  }
+}
+
 // Print to the console. only understands %d, %x, %p, %s.
-void
-cprintf(char *fmt, ...)
+void cprintf(char *fmt, ...)
 {
   int i, c, locking;
   uint *argp;
   char *s;
 
   locking = cons.locking;
-  if(locking)
+  if (locking)
     acquire(&cons.lock);
 
   if (fmt == 0)
     panic("null fmt");
 
-  argp = (uint*)(void*)(&fmt + 1);
-  for(i = 0; (c = fmt[i] & 0xff) != 0; i++){
-    if(c != '%'){
+  argp = (uint *)(void *)(&fmt + 1);
+  for (i = 0; (c = fmt[i] & 0xff) != 0; i++)
+  {
+    if (c != '%')
+    {
       consputc(c);
       continue;
     }
     c = fmt[++i] & 0xff;
-    if(c == 0)
+    if (c == 0)
       break;
-    switch(c){
+
+    int width = 0;
+    while (c >= '0' && c <= '9')
+    {
+      width = width * 10 + (c - '0');
+      c = fmt[++i] & 0xff;
+    }
+
+    switch (c)
+    {
     case 'd':
-      printint(*argp++, 10, 1);
-      break;
+    {
+      char buffer[32];
+      int2str(*argp++, buffer, 10);
+      int len;
+      for (len = 0; buffer[len]; len++)
+        ; // 문자열의 길이 계산
+      if (width > len)
+      {
+        printspaces(width - len); // 필요한 만큼 공백을 출력
+      }
+      for (int j = 0; j < len; j++)
+      {
+        consputc(buffer[j]);
+      }
+    }
+    break;
+    
+    case 'u':
+    {
+      char buffer[64];
+      uint2str((unsigned int)*argp++, buffer, 10); // 부호 없는 정수를 문자열로 변환
+      int len;
+      for (len = 0; buffer[len]; len++)
+        ; // 문자열의 길이 계산
+      if (width > len)
+      {
+        printspaces(width - len); // 필요한 만큼 공백을 출력
+      }
+      for (int j = 0; j < len; j++)
+      {
+        consputc(buffer[j]);
+      }
+    }
+    break;
+    case 'U':
+    {
+      char buffer[64];
+      unsigned int high_val = *argp++;
+      unsigned int low_val = *argp++;
+      uint64_to_str(high_val, low_val, buffer, 10);
+      int len;
+      for (len = 0; buffer[len]; len++)
+        ; // 문자열의 길이 계산
+      if (width > len)
+      {
+        printspaces(width - len); // 필요한 만큼 공백을 출력
+      }
+      for (int j = 0; j < len; j++)
+      {
+        consputc(buffer[j]);
+      }
+    }
+    break;
     case 'x':
     case 'p':
       printint(*argp++, 16, 0);
       break;
     case 's':
-      if((s = (char*)*argp++) == 0)
+    {
+      if ((s = (char *)*argp++) == 0)
         s = "(null)";
-      for(; *s; s++)
+      int len;
+      for (len = 0; s[len]; len++)
+        ; // 문자열의 길이 계산
+      if (width > len)
+      {
+        printspaces(width - len); // 필요한 만큼 공백을 출력
+      }
+      for (; *s; s++)
         consputc(*s);
-      break;
+    }
+    break;
     case '%':
       consputc('%');
       break;
@@ -99,7 +295,7 @@ cprintf(char *fmt, ...)
     }
   }
 
-  if(locking)
+  if (locking)
     release(&cons.lock);
 }
 

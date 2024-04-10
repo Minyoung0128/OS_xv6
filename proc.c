@@ -86,6 +86,11 @@ get_total_weight(void){
   return total_weight;
 }
 
+void
+update_vruntime(struct proc* p){
+  // runtime은 이미 업데이트 되었다고 가정
+  p->vruntime = (p->runtime)*weight[20]/weight[p->nice];
+}
 
 void
 pinit(void)
@@ -359,7 +364,7 @@ exit(void)
   // process가 종료되니까 time slice 계산도 다시 되어야 하나?
   uint time = ticks*1000 - curproc->start_tick;
   curproc->runtime += time;
-  curproc->vruntime = (curproc->runtime)*weight[20]/weight[curproc->nice];
+  update_vruntime(curproc);
 
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
@@ -509,7 +514,7 @@ yield(void)
   uint finish_time = ticks*1000;
   
   p->runtime += finish_time - p->start_tick;
-  p->vruntime = p->runtime * weight[20]/weight[p->nice] ;
+  update_vruntime(p);
   myproc()->state = RUNNABLE;
   sched();
   release(&ptable.lock);
@@ -566,7 +571,7 @@ sleep(void *chan, struct spinlock *lk)
   // runtime 계산
   uint time = ticks*1000 - p->start_tick;
   p->runtime += time;
-  p->vruntime = p->runtime*weight[20]/weight[p->nice];
+  update_vruntime(p);
 
   sched();
 
@@ -749,20 +754,18 @@ ps(int pid)
 
   acquire(&ptable.lock);
   if (pid == 0){
-    // cprintf("%10s %10s %10s %10s %15s %10s %10s tick %5d\n",
-    //         "name", "pid", "state", "priority", "runtime/weight", "runtime",
-    //         "vruntime", ticks * 1000);
-    
-    cprintf("%s \t %s \t %s \t %s \t %s \t %s \t %s \t tick %d\n",
+    cprintf("%10s %10s %10s %10s %15s %10s %10s tick %5d\n",
             "name", "pid", "state", "priority", "runtime/weight", "runtime",
             "vruntime", ticks * 1000);
+    
+
     for (p=ptable.proc; p<&ptable.proc[NPROC]; p++){
 	    if (p->state ==0){
 	    continue;
 	    }
-	    cprintf("%s \t %d \t %s \t %d \t %d \t %d \t %d \n",
+	    cprintf("%10s %10d %10s %10d %15u %10u %10u\n",
                 p->name, p->pid, state2string[p->state], p->nice, (p->runtime / weight[p->nice]),
-                p->runtime,p->vruntime);
+                p->runtime, p->vruntime);
     }
     
   release(&ptable.lock);
@@ -783,4 +786,7 @@ ps(int pid)
   }
 
 }
+
+// 문자열 패딩..
+
 
