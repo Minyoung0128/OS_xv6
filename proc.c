@@ -39,7 +39,7 @@ static void wakeup1(void *chan);
 uint
 find_min_time(void){
     // 최소 vruntime을 가지고 있는 process를 가져오기 
-    uint min = 2147483647;
+    uint min = UINT_MAX;
     struct proc* p;
 
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
@@ -85,6 +85,7 @@ get_total_weight(void){
   
   return total_weight;
 }
+
 
 void
 pinit(void)
@@ -355,6 +356,11 @@ exit(void)
     }
   }
 
+  // process가 종료되니까 time slice 계산도 다시 되어야 하나?
+  uint time = ticks*1000 - curproc->start_tick;
+  curproc->runtime += time;
+  curproc->vruntime = (curproc->runtime)*weight[20]/weight[curproc->nice];
+
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
 
@@ -497,11 +503,12 @@ yield(void)
 
   // 내 프로그램이 할당받은 time slice를 다 썼으면.. 그때 양보 수행
   // 일단 현재 cpu에서 수행하고 있는 프로세스를 가져와서 검사해야됨
+
   struct proc* p = myproc();
 
   uint finish_time = ticks*1000;
   
-  p->runtime = finish_time - p->start_tick;
+  p->runtime += finish_time - p->start_tick;
   p->vruntime = p->runtime * weight[20]/weight[p->nice] ;
   myproc()->state = RUNNABLE;
   sched();
@@ -556,6 +563,11 @@ sleep(void *chan, struct spinlock *lk)
   p->chan = chan;
   p->state = SLEEPING;
 
+  // runtime 계산
+  uint time = ticks*1000 - p->start_tick;
+  p->runtime += time;
+  p->vruntime = p->runtime*weight[20]/weight[p->nice];
+
   sched();
 
   // Tidy up.
@@ -579,7 +591,20 @@ wakeup1(void *chan)
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if(p->state == SLEEPING && p->chan == chan){
-      p->vruntime = mintime - weight[20]/weight[p->nice];
+      if (mintime == UINT_MAX){
+        // Runnable process가 아무것도 없을 때 
+        p->vruntime = 0;
+      }
+      else{
+        int n_vrun = mintime - weight[20]/weight[p->nice];
+      if (n_vrun<0){
+        p->vruntime = 0;
+      }
+      else{
+        p->vruntime = mintime - weight[20]/weight[p->nice];
+      }
+      }
+      
       p->state = RUNNABLE;
     }
 }
