@@ -1,37 +1,56 @@
 #include "types.h"
-#include "stat.h"
 #include "user.h"
+#include "stat.h"
 
-void testcfs()
+#define NCHILDREN 20
+
+int cnt = 0;
+unsigned long randstate = 1;
+unsigned int rand()
 {
-	int parent = getpid();
-	int child;
-	int i;
-	double x = 0, z;
-	if((child = fork()) == 0) { // child
-		setnice(parent, 39);		// if you set parent's priority lower than child, 
-								// 2nd ps will only printout parent process,
-								// since child finished its job earlier & exit
-		for(i = 0; i < 3000; i++){
-			for ( z = 0; z < 300000.0; z += 0.1 )
-				x =  x + 3.14 * 89.64;
-		}
-		ps(0);
-		exit();
-	} else {	
-		setnice(child, 39);	  //parent
-		for(i = 0; i < 3000; i++){
-			for ( z = 0; z < 300000.0; z += 0.1 )
-				x =  x + 3.14 * 89.64;
-		}
-		ps(0);
-		wait();
-	}
+  randstate = randstate * 1664525 + 1013904223;
+  return randstate;
 }
-int main(int argc, char **argv)
-{
-		printf(1, "=== TEST START ===\n");
-		testcfs();
-		printf(1, "=== TEST   END ===\n");
-		exit();
+
+int main(int argc, char *argv[]) {
+  int pid;
+  int children[NCHILDREN] = {0};
+  for(int i = 0; i < NCHILDREN; ++i) {
+    if ((pid = fork()) > 0) {
+      children[i] = pid;
+    }
+    if (pid < 0) {
+      for(int j = 0; j < i; ++j) {
+        kill(children[j]);
+      }
+      exit();
+    }
+    if (pid == 0) {
+      while(1) {
+        for(int i = 0; i < 10000000; ++i) {cnt = i;}
+        //if (i%2==0) {;}
+        //else {sleep(1);}
+      }
+    }
+  }
+  setnice(getpid(), 0);
+
+  printf(1, "successfully forked children!\n");
+
+  //sleep(100);
+  for(int i = 0; i < NCHILDREN; ++i) {
+    //int rnd = rand() % 40;
+    //printf(1, "random number = %d\n", rnd);
+    if (setnice(children[i], i * 2 + 1) < 0)
+      printf(1, "failed to set nice of %d'th child\n", i);
+    else
+      printf(1, "nice value of %d'th child : %d\n", i, getnice(children[i]));
+  }
+
+  while(1) {
+    ps(0);
+    sleep(100);
+    //for(int i = 0; i < 100000000; ++i) {cnt=0;}
+  }
+  exit();
 }

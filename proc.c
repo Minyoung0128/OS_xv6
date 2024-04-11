@@ -89,7 +89,7 @@ get_total_weight(void){
 void
 update_vruntime(struct proc* p){
   // runtime은 이미 업데이트 되었다고 가정
-  p->vruntime = (p->runtime)*weight[20]/weight[p->nice];
+  p->vruntime += p->runtick*1000*1024/weight[p->nice];
 }
 
 void
@@ -176,7 +176,7 @@ found:
   p-> runtime =0;
   p-> vruntime=0;
   p-> time_slice=0; 
-  p-> start_tick=ticks*1000;
+  p-> runtick= 0;
 
   release(&ptable.lock);
 
@@ -306,7 +306,7 @@ fork(void)
   np->runtime= curproc->runtime;
   np->vruntime= curproc->vruntime;
   np->time_slice = curproc->time_slice; 
-  np->start_tick=ticks*1000;
+  np->runtick = 0;
   
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
@@ -355,16 +355,15 @@ exit(void)
   // Pass abandoned children to init.
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->parent == curproc){
-      p->parent = initproc;
+      p->parent = initproc;p->runtick = 0;
       if(p->state == ZOMBIE)
         wakeup1(initproc);
     }
   }
 
   // process가 종료되니까 time slice 계산도 다시 되어야 하나?
-  uint time = ticks*1000 - curproc->start_tick;
-  curproc->runtime += time;
-  update_vruntime(curproc);
+  // curproc->runtime += curproc->runtick *1000;
+  // update_vruntime(curproc);
 
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
@@ -452,14 +451,13 @@ scheduler(void)
     uint time_slice = 10*1000* (float)(weight[min_proc->nice])/(float)(get_total_weight());
 
     min_proc -> time_slice = time_slice;
-    min_proc -> start_tick = ticks*1000;
+    min_proc -> runtick = 0 ;
     
     c->proc = min_proc;
     
     switchuvm(min_proc);
 
     min_proc->state = RUNNING;
-    min_proc->start_tick = ticks*1000;
 
     swtch(&(c->scheduler), min_proc->context);
     switchkvm();
@@ -510,11 +508,12 @@ yield(void)
   // 일단 현재 cpu에서 수행하고 있는 프로세스를 가져와서 검사해야됨
 
   struct proc* p = myproc();
-
-  uint finish_time = ticks*1000;
   
-  p->runtime += finish_time - p->start_tick;
+  // runtime 더해주고 
+  p-> runtime += p-> runtick *1000;
+  // runtick 초기화 
   update_vruntime(p);
+  p->runtick = 0;
   myproc()->state = RUNNABLE;
   sched();
   release(&ptable.lock);
@@ -568,10 +567,10 @@ sleep(void *chan, struct spinlock *lk)
   p->chan = chan;
   p->state = SLEEPING;
 
-  // runtime 계산
-  uint time = ticks*1000 - p->start_tick;
-  p->runtime += time;
+  // 지금까지 실행된 시간 계산 및 runtick 초기화
+  p -> runtime += p ->runtick *1000;
   update_vruntime(p);
+  p->runtick = 0;
 
   sched();
 
@@ -753,6 +752,7 @@ ps(int pid)
   };	
 
   acquire(&ptable.lock);
+
   if (pid == 0){
     cprintf("%10s %10s %10s %10s %15s %10s %10s tick %5d\n",
             "name", "pid", "state", "priority", "runtime/weight", "runtime",
@@ -787,6 +787,5 @@ ps(int pid)
 
 }
 
-// 문자열 패딩..
 
 

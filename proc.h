@@ -39,8 +39,8 @@ struct proc {
   int nice;
   uint runtime; // ticks * 1000
   uint vruntime; // ticks * 1000
+  uint runtick; // 실제로 running 된 tick을 계산
   uint time_slice;  // ticks * 1000
-  uint start_tick; // ticks
   
   uint sz;                     // Size of process memory (bytes)
   pde_t* pgdir;                // Page table
