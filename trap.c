@@ -107,8 +107,8 @@ trap(struct trapframe *tf)
   if(myproc() && myproc()->state == RUNNING &&
      tf->trapno == T_IRQ0+IRQ_TIMER){
       // Running process의 Runtick 을 1씩 증가
-      myproc()->runtick += 1;
-      if(myproc()->runtick * 1000 >= myproc()->time_slice){
+      myproc() -> runtick += 1;
+      if((myproc()->runtick)*1000 >= myproc() -> time_slice){
         yield();
       }
      }

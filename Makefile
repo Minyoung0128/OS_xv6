@@ -183,6 +183,7 @@ UPROGS=\
 	_zombie\
 	_getnice\
 	_cfstest\
+	_cfstest2\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)

@@ -39,8 +39,6 @@ int main(int argc, char *argv[]) {
 
   //sleep(100);
   for(int i = 0; i < NCHILDREN; ++i) {
-    //int rnd = rand() % 40;
-    //printf(1, "random number = %d\n", rnd);
     if (setnice(children[i], i * 2 + 1) < 0)
       printf(1, "failed to set nice of %d'th child\n", i);
     else

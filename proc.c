@@ -87,11 +87,20 @@ get_total_weight(void){
 }
 
 void
-update_vruntime(struct proc* p){
-  // runtime은 이미 업데이트 되었다고 가정
-  p->vruntime += p->runtick*1000*1024/weight[p->nice];
+update_runtime(struct proc* p){
+    // runtick 초기화
+    // runtime, vruntime 업데이트 수행. 
+  if(p==NULL){
+    cprintf("Wrong process!!!!!!!");
+    return;
+  }
+  else{
+    uint t = p->runtick;
+    p->runtick = 0;
+    p->runtime += t *1000;
+    p -> vruntime += t * 1000 * 1024/weight[p->nice];
+  }
 }
-
 void
 pinit(void)
 {
@@ -173,10 +182,10 @@ found:
 
   // proj2
   p -> nice = 20;
-  p-> runtime =0;
-  p-> vruntime=0;
-  p-> time_slice=0; 
-  p-> runtick= 0;
+  p-> runtime = 0;
+  p-> vruntime = 0;
+  p-> time_slice = 0; 
+  p-> runtick = 0;
 
   release(&ptable.lock);
 
@@ -303,8 +312,8 @@ fork(void)
   // for proj2, 부모 process 한테서 값 가져옴
 
   np->nice = curproc->nice;
-  np->runtime= curproc->runtime;
-  np->vruntime= curproc->vruntime;
+  np->runtime = curproc->runtime;
+  np->vruntime = curproc->vruntime;
   np->time_slice = curproc->time_slice; 
   np->runtick = 0;
   
@@ -361,14 +370,11 @@ exit(void)
     }
   }
 
-  // process가 종료되니까 time slice 계산도 다시 되어야 하나?
-  // curproc->runtime += curproc->runtick *1000;
-  // update_vruntime(curproc);
-
+  // for proj2, 여기서도 업데이트 해주긴 하자...
+  update_runtime(curproc);
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
 
-  // Runtime 계산
   sched();
   panic("zombie exit");
 }
@@ -446,28 +452,27 @@ scheduler(void)
     min_proc = find_min_proc();
 
     if(min_proc && min_proc->state == RUNNABLE){
+      
+      // min proc이 없으면 이 block에 안 들어오고 min proc이 생길 때까지 find_min_proc을 반복
       // time slice 얼마나 줄지 결정
-    
-    uint time_slice = 10*1000* (float)(weight[min_proc->nice])/(float)(get_total_weight());
+      uint time_slice = 10*1000* (float)(weight[min_proc->nice])/(float)(get_total_weight());
 
-    min_proc -> time_slice = time_slice;
-    min_proc -> runtick = 0 ;
-    
-    c->proc = min_proc;
-    
-    switchuvm(min_proc);
+      min_proc -> time_slice = time_slice;
+      min_proc -> runtick = 0 ;
+      
+      c->proc = min_proc;
+      
+      switchuvm(min_proc);
 
-    min_proc->state = RUNNING;
+      min_proc->state = RUNNING;
 
-    swtch(&(c->scheduler), min_proc->context);
-    switchkvm();
+      swtch(&(c->scheduler), min_proc->context);
+      switchkvm();
 
-    // Process is done running for now.
-    // It should have changed its p->state before coming back.
-    c->proc = 0;
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
     }
-  
-
     release(&ptable.lock);
   }
 }
@@ -504,16 +509,10 @@ yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
 
-  // 내 프로그램이 할당받은 time slice를 다 썼으면.. 그때 양보 수행
-  // 일단 현재 cpu에서 수행하고 있는 프로세스를 가져와서 검사해야됨
-
   struct proc* p = myproc();
   
-  // runtime 더해주고 
-  p-> runtime += p-> runtick *1000;
-  // runtick 초기화 
-  update_vruntime(p);
-  p->runtick = 0;
+  update_runtime(p);
+
   myproc()->state = RUNNABLE;
   sched();
   release(&ptable.lock);
@@ -568,9 +567,8 @@ sleep(void *chan, struct spinlock *lk)
   p->state = SLEEPING;
 
   // 지금까지 실행된 시간 계산 및 runtick 초기화
-  p -> runtime += p ->runtick *1000;
-  update_vruntime(p);
-  p->runtick = 0;
+  // 다시 깨어났을 때.... runtick이 다시 시작되어야 하니까
+  update_runtime(p);
 
   sched();
 
@@ -586,7 +584,7 @@ sleep(void *chan, struct spinlock *lk)
 
 //PAGEBREAK!
 // Wake up all processes sleeping on chan.
-// The ptable lock must be held.
+// The ptable lock must be held.`
 static void
 wakeup1(void *chan)
 {
@@ -600,12 +598,14 @@ wakeup1(void *chan)
         p->vruntime = 0;
       }
       else{
-        int n_vrun = mintime - weight[20]/weight[p->nice];
+        int n_vrun = mintime - 1000*1024/weight[p->nice];
       if (n_vrun<0){
+        // cprintf("It is negavtive , minttime : %d, weight %d process : %d\n", mintime, p->nice,1000*1024/weight[p->nice]);
         p->vruntime = 0;
       }
       else{
-        p->vruntime = mintime - weight[20]/weight[p->nice];
+        // cprintf("n_vrun of weight %d process : %d\n",p->nice,n_vrun);
+        p->vruntime = n_vrun;
       }
       }
       
@@ -777,9 +777,13 @@ ps(int pid)
 	  	return;
 	  }
 	  if(p->pid == pid){
-    cprintf("name \t pid \t state \t priority\n");
+      cprintf("%10s %10s %10s %10s %15s %10s %10s tick %5d\n",
+            "name", "pid", "state", "priority", "runtime/weight", "runtime",
+            "vruntime", ticks * 1000);
     
-      cprintf("%s \t %d \t %s \t %d\n",p->name,p->pid,state2string[p->state], p->nice); 
+      cprintf("%10s %10d %10s %10d %15u %10u %10u\n",
+                p->name, p->pid, state2string[p->state], p->nice, (p->runtime / weight[p->nice]),
+                p->runtime, p->vruntime);
   release(&ptable.lock);
       return;
     }
