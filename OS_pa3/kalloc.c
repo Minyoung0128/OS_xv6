@@ -94,3 +94,16 @@ kalloc(void)
   return (char*)r;
 }
 
+uint
+freemem_count(void){
+  uint i=0;
+
+  r = kmem.freelist;
+
+  if(r){
+    i++;
+    r = r->next;
+  }
+
+  return r;
+}
