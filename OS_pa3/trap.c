@@ -78,6 +78,11 @@ trap(struct trapframe *tf)
     lapiceoi();
     break;
 
+  case T_PGFLT:
+    // rcr2()로 address 읽어오기
+    r = rcr2();
+    page_fault_handler(r, tf->err);
+    break;
   //PAGEBREAK: 13
   default:
     if(myproc() == 0 || (tf->cs&3) == 0){

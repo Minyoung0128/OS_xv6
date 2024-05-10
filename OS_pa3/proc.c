@@ -7,6 +7,9 @@
 #include "proc.h"
 #include "spinlock.h"
 
+#define MMAPBASE 0x40000000
+
+
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
@@ -19,6 +22,9 @@ extern void forkret(void);
 extern void trapret(void);
 
 static void wakeup1(void *chan);
+
+struct mmap_area mma[64];
+
 
 void
 pinit(void)
@@ -531,4 +537,166 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+// Memory Mapping
+
+uint mmap(uint addr, int length, int prot, int flags, int fd, int offset){
+  
+  proc* p = myproc();
+  
+  uint stara_address = addr + MMAPBASE;
+  uint end_address = MMAPBASE + addr + length;
+
+  // Break point check 
+
+  struct file *f = 0;
+
+  if((fd<0 && fd!= -1) || fd >= 16){
+    // file descriptor 숫자는 16으로 제한
+    return 0;
+  }
+
+  if(fd!=-1){
+    f = p->ofile[fd];
+  }
+
+  if((flags & MAP_ANONYMOUS)==1 && (fd!=-1 || offset!=0)) {
+    // Anonymous이면 fd가 -1, offset이 0이어야함
+    return 0;
+  }
+
+  if(flags & MAP_ANONYMOUS == 0){
+    // file을 읽어야와야 함
+    if((prot & PROT_READ) && !(f->readable)){
+      // 읽을라했는데 읽을 수 없는 파일
+      return 0;
+    }
+    if((prot & PROT_WRITE) && !(f->writable)){
+      return 0;
+    }
+    if(f->type != FD_INODE){
+      // in-memory가 아닐 때
+      return 0;
+    }
+  }
+
+  // mmap 시작
+   
+  struct mmap_area *tmp = &mma[0];
+  int i = 0;
+  while(tmp->valid!=-1){
+    i++;
+    tmp = &mma[i];
+  }
+
+  // 여기로 왔으면, tmp가 빈 mma를 가리키고 있음
+
+  tmp->proc = p;
+  tmp->addr = addr;
+  tmp->offset = offset;
+  tmp->f = f;
+  tmp->flags = flags;
+  tmp->length = length;
+  tmp->prot = prot;
+  
+  // populate 체크
+  // populate가 아니면 지금 page table 업데이트 안해줘도 됨
+  // 나중에 page fault 발생 시 그때 populate 수행
+  if (flags == 0 || flags == 1){
+    // not populated 
+    return addr;
+  }
+  else if(flags == 2){
+    // Not Anonymous + populated
+    // file 읽어오고, page 업데이트 둘 다 해줘야 함. 
+    filedup(f);
+
+    for(int i =0;i<length;i+=PGSIZE){
+      m = kalloc();
+      if(m==0) return 0;
+
+      // Memory 0으로 비워주기 
+      memset(m,0,PGSIZE)
+
+      // physical address에 저장을 해주고 그걸 virtual이랑 연결
+      fileread(f, m, PGSIZE)
+      
+      // mappage의 perm 인자가 뭘 말하는지 모르겠다
+      // 뭔가.. 권한 설정인 것 같음 
+      // PTE_U > usermode에서 읽을 수 있는 page table Entry
+      // prot으로 그 page를 read, write 할 수 있는지 권한 관리 + usermode에서도 사용할 수 있도록 OR 연산 수행
+
+      pde_t *pde_idx = p->pgdir;
+      if(mappages(pde_idx, (void*)(stara_address + i), PGSIZE, V2P(m), prot|PTE_U)==-1) return 0;
+
+      tmp->valid = 1;
+    }
+
+  }
+  else if(flags == 3){
+    // Anonymous + populated
+    // 메모리 영역 0으로 채우기
+    for(int i =0;i<length;i+=PGSIZE){
+      m = kalloc();
+      if(m==0) return 0;
+
+      memset(m,0,PGSIZE)
+
+      if(mappages(pde_idx, (void*)(stara_address + i), PGSIZE, V2P(m), prot|PTE_U)==-1) return 0;
+
+      tmp->valid = 1;
+    }
+  }
+
+  return addr;
+
+}
+
+void page_fault_handler(uint addr, int err){
+  // 연결이 안되어있는 addr을 받아옴 -> mma에서 해당 addr이 있는지 찾고 있으면 그때 읽어오기
+
+  struct proc* p = myproc();
+  struct mmap_area* mmap;
+  int i = 0;
+  while(i<64){
+    mmap = mma[i];
+    if(mmap->addr <= addr && (mmap->addr + mmap->length)>= addr && mmap->p == p) break;
+    i++;
+  }
+
+  if(i==64){
+    // 잘못된 address 하는거니까 exit
+    return -1;
+  }
+
+  if(err&2 ==0){
+    // Read Error니까 해당 page가 읽을수있는지 체크 
+    if(mmap->prot & PROT_READ == 0) return -1;
+  }
+
+  else if(err&2 ==1){
+    // write Error
+    if(mmap->prot & PROT_WRITE == 0) return -1;
+  }
+
+  if(m-> flags == 0){
+    // Not Anonymous > should read file
+  }
+  for(int i =0; i < m->length; i += PGSIZE){
+      m = kalloc();
+      if(m==0) return 0;
+
+      memset(m,0,PGSIZE)
+
+      if(mappages(pde_idx, (void*)(stara_address + i), PGSIZE, V2P(m), prot|PTE_U)==-1) return 0;
+
+      tmp->valid = 1;
+    }
+
+
+  
+  
+
+
 }
