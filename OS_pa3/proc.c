@@ -570,16 +570,17 @@ uint mmap(uint addr, int length, int prot, int flags, int fd, int offset){
 
   struct file *f = 0;
 
-  if((fd<0 && fd!= -1) || fd >= 16){
+  if((fd < 0 && fd!= -1) || fd >= 16){
     // file descriptor 숫자는 16으로 제한
     return 0;
   }
 
   if(fd!=-1){
     f = p->ofile[fd];
+    if(f==0) return 0; // file 유효하지 않음
   }
 
-  if((flags & MAP_ANONYMOUS)==1 && (fd!=-1 || offset!=0)) {
+  if((flags & MAP_ANONYMOUS) == 1 && (fd!=-1 || offset!=0)) {
     // Anonymous이면 fd가 -1, offset이 0이어야함
     return 0;
   }
@@ -591,10 +592,6 @@ uint mmap(uint addr, int length, int prot, int flags, int fd, int offset){
       return 0;
     }
     if((prot & PROT_WRITE) && !(f->writable)){
-      return 0;
-    }
-    if(f->type != FD_INODE){
-      // in-memory가 아닐 때
       return 0;
     }
   }
