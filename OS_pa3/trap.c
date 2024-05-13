@@ -8,11 +8,15 @@
 #include "traps.h"
 #include "spinlock.h"
 
+
+
 // Interrupt descriptor table (shared by all CPUs).
 struct gatedesc idt[256];
 extern uint vectors[];  // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
+
+extern int page_fault_handler(uint addr, uint err);
 
 void
 tvinit(void)
@@ -80,9 +84,11 @@ trap(struct trapframe *tf)
 
   case T_PGFLT:
     // rcr2()로 address 읽어오기
-    r = rcr2();
+    
+    uint r = rcr2();
     page_fault_handler(r, tf->err);
     break;
+
   //PAGEBREAK: 13
   default:
     if(myproc() == 0 || (tf->cs&3) == 0){
@@ -115,3 +121,5 @@ trap(struct trapframe *tf)
   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)
     exit();
 }
+
+

@@ -107,7 +107,7 @@ sys_mmap(void)
 }
 
 int
-sys_munmmap(void){
+sys_munmap(void){
   int addr;
   if(argint(0,&addr) < 0) return -1;
   return munmap(addr);

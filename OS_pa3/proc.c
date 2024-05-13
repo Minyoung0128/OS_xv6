@@ -6,9 +6,12 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "sleeplock.h"
+#include "fs.h"
+#include "file.h"
 
 #define MMAPBASE 0x40000000
-
+struct mmap_area mma[64] = {0};
 
 struct {
   struct spinlock lock;
@@ -22,14 +25,6 @@ extern void forkret(void);
 extern void trapret(void);
 
 static void wakeup1(void *chan);
-
-struct mmap_area mma[64];
-
-// mma area 초기화
-for(int i=0; i<64; i++){
-  mma[i].valid = -1;
-}
-
 
 void
 pinit(void)
@@ -153,6 +148,11 @@ userinit(void)
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
 
+  // 시작할 때 mma의 valid bit -1로 초기화
+  for(int i=0; i<64; i++){
+      mma[i].valid = -1;
+    }
+
   // this assignment to p->state lets other cores
   // run this process. the acquire forces the above
   // writes to be visible, and the lock is also needed
@@ -220,6 +220,66 @@ fork(void)
   np->cwd = idup(curproc->cwd);
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
+
+  // 새로운 프로세스의 메모리 영역 만들어줘야 함.
+  // 부모와 똑같은 메모리 영역을 가져야 한다. 
+  
+  // mma 뒤져서 부모가 가지고 있는 memory mapping 복사 
+  struct mmap_area* m;
+  for(i=0;i<64;i++){
+    m = &mma[i];
+    if(m->p == curproc && m->valid != -1){
+      // 복사해오기 
+      for(int j=0;j<64;j++){
+        // 빈 영역 찾기 
+        struct mmap_area* copy_m = &mma[j];
+        
+        if(copy_m->valid != -1) continue;
+      
+        copy_m->f = m->f;
+        copy_m->addr = m->addr;
+        copy_m->length = m->length;
+        copy_m->offset = m->offset;
+        copy_m->prot = m->prot;
+        copy_m->flags = m->flags;
+        copy_m->p = np;
+
+        if(m->valid == 1){
+          // 실제 physical memory가 할당되어 있으니까 가져와줘야돼
+          
+          if((m->flags & MAP_ANONYMOUS)){
+            // 0으로 채워주기 
+            for(int k=0;k<copy_m->length;k+=PGSIZE){
+              char* m_area = kalloc();
+              
+              if(m_area == 0) return 0; // kalloc 실패 
+              memset(m_area, 0, PGSIZE);
+            }
+
+            copy_m->valid = 1;
+          }
+          else{
+            // file 가져와야함
+            for(int k=0;k<copy_m->length;k+=PGSIZE){
+              char* m_area = kalloc();
+              
+              if(m_area == 0) return 0; // kalloc 실패 
+              memset(m_area, 0, PGSIZE);
+
+              filedup(copy_m->f);
+
+              pde_t* pde_idx = curproc->pgdir;
+              if(mappages(pde_idx, (void*)(m->addr + k), PGSIZE, V2P(m_area), m->prot|PTE_U)==-1) return 0;
+
+              copy_m->valid = 1;
+
+            }
+          
+          }
+        }
+      }
+    }
+  }
 
   pid = np->pid;
 
@@ -544,25 +604,26 @@ procdump(void)
   }
 }
 
-// Memory Mapping
-
 struct mmap_area*
 find_mmap_area(uint addr){
   struct mmap_area* m = 0;
+  struct proc* p = myproc();
   int i = 0;
 
   while(i<64){
-    m = mma[i];
-    if(m->addr <= addr && (m->addr + m->length) >= addr && m->p == p) return m;
+    m = &mma[i];
+    // cprintf("M Addr %d    M Valid %d \n\n",m->addr, m->valid);
+    if(m->addr <= addr && (m->addr + m->length) >= addr && m->p == p && m->valid != -1) {
+      return m;
+      }
     i++;
   }
-  
   return m;
 }
 
 uint mmap(uint addr, int length, int prot, int flags, int fd, int offset){
   
-  proc* p = myproc();
+  struct proc* p = myproc();
   
   uint start_address = addr + MMAPBASE;
 
@@ -585,7 +646,7 @@ uint mmap(uint addr, int length, int prot, int flags, int fd, int offset){
     return 0;
   }
 
-  if(flags & MAP_ANONYMOUS == 0){
+  if((flags & MAP_ANONYMOUS) == 0){
     // file을 읽어야와야 함
     if((prot & PROT_READ) && !(f->readable)){
       // 읽을라했는데 읽을 수 없는 파일
@@ -615,14 +676,16 @@ uint mmap(uint addr, int length, int prot, int flags, int fd, int offset){
 
   // 여기로 왔으면, tmp가 빈 mma를 가리키고 있음
 
-  tmp->proc = p;
-  tmp->addr = addr;
+  tmp->p = p;
+  tmp->addr = start_address;
   tmp->offset = offset;
   tmp->f = f;
   tmp->flags = flags;
   tmp->length = length;
   tmp->prot = prot;
   
+  pde_t *pde_idx = p->pgdir;
+
   // populate 체크
   // populate가 아니면 지금 page table 업데이트 안해줘도 됨
   // 나중에 page fault 발생 시 그때 populate 수행
@@ -642,17 +705,15 @@ uint mmap(uint addr, int length, int prot, int flags, int fd, int offset){
       if(mem_area==0) return 0;
 
       // Memory 0으로 비워주기 
-      memset(mem_area,0,PGSIZE)
+      memset(mem_area,0,PGSIZE);
 
       // physical address에 저장을 해주고 그걸 virtual이랑 연결
-      fileread(f, mem_area, PGSIZE)
+      fileread(f, mem_area, PGSIZE);
       
       // mappage의 perm 인자가 뭘 말하는지 모르겠다
       // 뭔가.. 권한 설정인 것 같음 
       // PTE_U > usermode에서 읽을 수 있는 page table Entry
       // prot으로 그 page를 read, write 할 수 있는지 권한 관리 + usermode에서도 사용할 수 있도록 OR 연산 수행
-
-      pde_t *pde_idx = p->pgdir;
       if(mappages(pde_idx, (void*)(start_address + i), PGSIZE, V2P(mem_area), prot|PTE_U)==-1) return 0;
 
       tmp->valid = 1;
@@ -666,22 +727,23 @@ uint mmap(uint addr, int length, int prot, int flags, int fd, int offset){
       mem_area = kalloc();
       if(mem_area==0) return 0;
 
-      memset(mem_area,0,PGSIZE)
+      memset(mem_area,0,PGSIZE);
 
       if(mappages(pde_idx, (void*)(start_address + i), PGSIZE, V2P(mem_area), prot|PTE_U)==-1) return 0;
 
       tmp->valid = 1;
     }
   }
+  
+  // cprintf("Memory map start %d\n",tmp->valid);
 
   return start_address;
 
 }
 
-int page_fault_handler(uint addr, int err){
+int page_fault_handler(uint addr, uint err){
   // 연결이 안되어있는 addr을 받아옴 -> mma에서 해당 addr이 있는지 찾고 있으면 그때 읽어오기
 
-  struct proc* p = myproc();
   struct mmap_area* m;
   char *mem_area = 0;
 
@@ -689,14 +751,14 @@ int page_fault_handler(uint addr, int err){
 
   if(m==0) return -1;
 
-  if(err&2 ==0){
+  if((err&2) ==0){
     // Read Error니까 해당 page가 읽을수있는지 체크 
-    if(m->prot & PROT_READ == 0) return -1;
+    if(((m->prot) & PROT_READ) == 0) return -1;
   }
 
-  else if(err&2 == 1){
+  else if(err&2){
     // write Error
-    if(m->prot & PROT_WRITE == 0) return -1;
+    if(((m->prot )& PROT_WRITE)== 0) return -1;
   }
 
   // mem area valid 체크
@@ -705,7 +767,7 @@ int page_fault_handler(uint addr, int err){
     return -1;
   }
 
-  if(m->valid ==1 ){
+  if(m->valid ==1){
     // page already exist
     return -1;
   }
@@ -732,7 +794,7 @@ int page_fault_handler(uint addr, int err){
 
       filedup(f);
 
-      f->offset = m->offset;
+      f->off = m->offset;
 
       for(int i =0; i < m->length; i += PGSIZE){
 
@@ -743,12 +805,12 @@ int page_fault_handler(uint addr, int err){
         memset(mem_area,0,PGSIZE);
         fileread(f, mem_area, PGSIZE);
 
-        if(mappages(pde_idx, (void*)(m->address + MMAPBASE + i), PGSIZE, V2P(mem_area), m->prot|PTE_U|PTE_W)==-1) return -1;
+        if(mappages(pde_idx, (void*)(m->addr + MMAPBASE + i), PGSIZE, V2P(mem_area), m->prot|PTE_U|PTE_W)==-1) return -1;
         }
     }
 
     else if(m->flags == 1){
-      // Anonymous + not populated
+      // Anonymous + not populatedproc.cfileh
       for (int i=0;i< m->length; i+= PGSIZE){
         mem_area = kalloc();
 
@@ -756,7 +818,7 @@ int page_fault_handler(uint addr, int err){
 
         memset(mem_area,0,PGSIZE);
 
-        if(mappages(pde_idx, (void*)(stara_adm->address + MMAPBASE + i), PGSIZE, V2P(mem_area), ,m->prot|PTE_U|PTE_W)==-1) return -1;
+        if(mappages(pde_idx, (void*)(m->addr + MMAPBASE + i), PGSIZE, V2P(mem_area),m->prot|PTE_U|PTE_W)==-1) return -1;
 
       }
     }
@@ -778,36 +840,42 @@ int page_fault_handler(uint addr, int err){
 }
 
 int munmap(uint addr){
+  
   struct mmap_area* m;
 
   m = find_mmap_area(addr);
 
-  if(m==0) return -1; // 해당 address가 mmap area에 존재하지 않음
+  if(m==0) {return -1;} // 해당 address가 mmap area에 존재하지 않음
 
   if(m->valid == 0){
     // page가 아직 allocate 되지 않은 mmap area
-    m->valid == -1;
+    m->valid = -1;
     return 0;
   }
 
   // page free
 
-  pde_t* pde_idx = m->f->pde_idx;
+  pde_t* pde_idx = m->p->pgdir;
 
   pte_t* pte;
   
+  // cprintf("Memory Unmap %d\n",m->addr);
   for(int i = 0;i<m->length;i+=PGSIZE){
-    pte = walkpgdir(pde_idx, (void*)(addr + i), 0);
+    pte = walkpgdir(pde_idx, (char *)(addr + i), 0);
     if(pte == 0) return -1;
 
-    uint pte_flag = PTE_FLAGS(pte);
+    uint pte_flag = PTE_FLAGS(*pte);
 
-    if(pte_flag & PTE_P == 0) continue; // 이미 pte가 초기화된 상황이니까 굳이 안해줘도 됨
+    if((pte_flag & PTE_P)==0) {
+      // cprintf("Here\n");
+      continue;
+    } // 이미 pte가 초기화된 상황이니까 굳이 안해줘도 됨
 
     // physical address가져오기
-    uint p_addr = PTE_ADDR(pte);
+    uint p_addr = PTE_ADDR(*pte);
+
     kfree(P2V(p_addr));
-    
+    // cprintf("After Mem Free %d\n", freemem());
     // pte 초기화
     *pte = 0;
   }
@@ -819,5 +887,3 @@ int munmap(uint addr){
 uint freemem(){
   return freemem_count();
 }
-
-

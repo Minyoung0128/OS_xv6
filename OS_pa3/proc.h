@@ -57,7 +57,6 @@ struct proc {
 //   fixed-size stack
 //   expandable heap
 
-// Memory Mapping
 
 struct mmap_area{
   struct file *f;
@@ -69,5 +68,4 @@ struct mmap_area{
   struct proc *p; 
 
   int valid; // -1 : 없는거 0 : 할당은 됐는데 page table에 없는거 1 : 있는거 
-}
-
+};
