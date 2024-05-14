@@ -228,11 +228,12 @@ fork(void)
   struct mmap_area* m;
   for(i=0;i<64;i++){
     m = &mma[i];
+    struct mmap_area* copy_m ;
     if(m->p == curproc && m->valid != -1){
       // 복사해오기 
       for(int j=0;j<64;j++){
         // 빈 영역 찾기 
-        struct mmap_area* copy_m = &mma[j];
+        copy_m = &mma[j];
         
         if(copy_m->valid != -1) continue;
       
@@ -259,7 +260,10 @@ fork(void)
             copy_m->valid = 1;
           }
           else{
+            // cprintf("Let'f file read\n\n");
             // file 가져와야함
+            // copy_m->f->off = copy_m -> offset;
+
             for(int k=0;k<copy_m->length;k+=PGSIZE){
               char* m_area = kalloc();
               
@@ -267,16 +271,25 @@ fork(void)
               memset(m_area, 0, PGSIZE);
 
               filedup(copy_m->f);
+              fileread(copy_m->f, m_area, PGSIZE);
 
-              pde_t* pde_idx = curproc->pgdir;
+              pde_t* pde_idx = np->pgdir;
               if(mappages(pde_idx, (void*)(m->addr + k), PGSIZE, V2P(m_area), m->prot|PTE_U)==-1) return 0;
 
               copy_m->valid = 1;
 
             }
-          
+            
           }
+
+          break;
         }
+        else{
+          // 안가져와도 ㄱㅊ 
+              copy_m -> valid = 0;
+          }
+            
+        break;
       }
     }
   }
@@ -610,15 +623,15 @@ find_mmap_area(uint addr){
   struct proc* p = myproc();
   int i = 0;
 
-  while(i<64){
+  for(i = 0;i<64;i++){
     m = &mma[i];
-    // cprintf("M Addr %d    M Valid %d \n\n",m->addr, m->valid);
     if(m->addr <= addr && (m->addr + m->length) >= addr && m->p == p && m->valid != -1) {
+      // cprintf("M addr : %d\n Find : %d\n",m->addr, addr);
       return m;
       }
-    i++;
   }
-  return m;
+  // cprintf("Found Fail %d\n",m);
+  return 0;
 }
 
 uint mmap(uint addr, int length, int prot, int flags, int fd, int offset){
@@ -629,6 +642,10 @@ uint mmap(uint addr, int length, int prot, int flags, int fd, int offset){
 
   // Break point check 
 
+  if(start_address % PGSIZE != 0){
+    // cprintf("Not aligned Page Address\n");
+    return 0;
+  }
   struct file *f = 0;
 
   if((fd < 0 && fd!= -1) || fd >= 16){
@@ -658,23 +675,27 @@ uint mmap(uint addr, int length, int prot, int flags, int fd, int offset){
   }
 
   // mmap 시작
-   
+
+  // cprintf("Start MMAP\n"); 
   struct mmap_area *tmp = &mma[0];
   char* mem_area = 0; //  여기에다가 메모리 할당
 
-  int i = 0;
+  int idx = 0;
 
-  while(tmp->valid!=-1){
-    i++;
-    tmp = &mma[i];
+  for(idx = 0;idx<64;idx++){
+    tmp = &mma[idx];
+    if(tmp->valid==-1){
+      break;
+    } 
   }
 
-  if(i==64){
-    // 빈 mma 없음
+  if(idx>=64){
     return 0;
   }
 
   // 여기로 왔으면, tmp가 빈 mma를 가리키고 있음
+
+  // cprintf("Write in %dth idx\n",idx);
 
   tmp->p = p;
   tmp->addr = start_address;
@@ -692,7 +713,8 @@ uint mmap(uint addr, int length, int prot, int flags, int fd, int offset){
   if (flags == 0 || flags == 1){
     // not populated 
     tmp->valid = 0;
-    return addr;
+    // cprintf("Not Populated mapping\n");
+    return start_address;
   }
 
   else if(flags == 2){
@@ -743,7 +765,7 @@ uint mmap(uint addr, int length, int prot, int flags, int fd, int offset){
 
 int page_fault_handler(uint addr, uint err){
   // 연결이 안되어있는 addr을 받아옴 -> mma에서 해당 addr이 있는지 찾고 있으면 그때 읽어오기
-
+  // cprintf("PageFaultHandle\n");
   struct mmap_area* m;
   char *mem_area = 0;
 
@@ -758,24 +780,30 @@ int page_fault_handler(uint addr, uint err){
 
   else if(err&2){
     // write Error
-    if(((m->prot )& PROT_WRITE)== 0) return -1;
+    if(((m->prot)& PROT_WRITE)== 0) {
+      return -1;
+      }
   }
 
   // mem area valid 체크
   if(m->valid == -1){
     // 할당되지 않은 mma area 참조
+    // cprintf("Not Allocated Area\n");
     return -1;
   }
 
-  if(m->valid ==1){
+  if(m->valid == 1){
     // page already exist
+    // cprintf("Page already exist\n");
     return -1;
   }
 
   if(m->valid == 0){
     // 읽기 시작
-    pde_t* pde_idx = m->p->pgdir;
+    // cprintf("Valid is 0\n");
 
+    pde_t *pde_idx = m->p->pgdir;
+    // cprintf("pde idx %d\n",pde_idx);
     if(m -> flags == 0){
       // Not Anonymous > should read file
       struct file* f = m->f;
@@ -802,23 +830,24 @@ int page_fault_handler(uint addr, uint err){
 
         if(mem_area==0) return 0;
 
-        memset(mem_area,0,PGSIZE);
+        memset(mem_area ,0,PGSIZE);
         fileread(f, mem_area, PGSIZE);
 
-        if(mappages(pde_idx, (void*)(m->addr + MMAPBASE + i), PGSIZE, V2P(mem_area), m->prot|PTE_U|PTE_W)==-1) return -1;
+        if(mappages(pde_idx, (void*)(m->addr + i), PGSIZE, V2P(mem_area), m->prot|PTE_U|PTE_W)==-1) return -1;
         }
     }
 
     else if(m->flags == 1){
-      // Anonymous + not populatedproc.cfileh
-      for (int i=0;i< m->length; i+= PGSIZE){
+      // Anonymous + not populated
+      // cprintf("Anonymous + not populated\n");
+      for (int i = 0 ;i < m->length; i+= PGSIZE){
         mem_area = kalloc();
 
         if(mem_area==0) return 0;
 
         memset(mem_area,0,PGSIZE);
 
-        if(mappages(pde_idx, (void*)(m->addr + MMAPBASE + i), PGSIZE, V2P(mem_area),m->prot|PTE_U|PTE_W)==-1) return -1;
+        if(mappages(pde_idx, (void*)(m->addr+ i), PGSIZE, V2P(mem_area),m->prot|PTE_U|PTE_W)==-1) return -1;
 
       }
     }
@@ -826,10 +855,10 @@ int page_fault_handler(uint addr, uint err){
     else{
       // flags가 2, 3인데 여기에 들어오는 거면 swap이 되었다는 거. 
       // 다음 과제에서 처리할듯?
-
       return -1;
     }
 
+    // cprintf("Page fault handler Complete\n");
     m->valid = 1; 
 
     return 0;
@@ -841,48 +870,58 @@ int page_fault_handler(uint addr, uint err){
 
 int munmap(uint addr){
   
-  struct mmap_area* m;
-
-  m = find_mmap_area(addr);
-
-  if(m==0) {return -1;} // 해당 address가 mmap area에 존재하지 않음
-
-  if(m->valid == 0){
-    // page가 아직 allocate 되지 않은 mmap area
-    m->valid = -1;
+  // page align 확인
+  if(addr % PGSIZE != 0){
+    // cprintf("Not aligned Address\n");
     return 0;
   }
 
-  // page free
+  struct mmap_area* m;
+  m = find_mmap_area(addr);
+
+  if(m == 0) {
+    // cprintf("addr %d is not exist!!!!\n",addr);
+    return -1;
+  } // 해당 address가 mmap area에 존재하지 않음
 
   pde_t* pde_idx = m->p->pgdir;
-
   pte_t* pte;
   
-  // cprintf("Memory Unmap %d\n",m->addr);
-  for(int i = 0;i<m->length;i+=PGSIZE){
-    pte = walkpgdir(pde_idx, (char *)(addr + i), 0);
-    if(pte == 0) return -1;
-
-    uint pte_flag = PTE_FLAGS(*pte);
-
-    if((pte_flag & PTE_P)==0) {
-      // cprintf("Here\n");
-      continue;
-    } // 이미 pte가 초기화된 상황이니까 굳이 안해줘도 됨
-
-    // physical address가져오기
-    uint p_addr = PTE_ADDR(*pte);
-
-    kfree(P2V(p_addr));
-    // cprintf("After Mem Free %d\n", freemem());
-    // pte 초기화
-    *pte = 0;
+  if(m->valid == 0){
+    // page가 아직 allocate 되지 않은 mmap area
+    m->valid = -1;
+    return 1;
   }
 
-  m->valid = -1;
-  return 1;
+  if(m->valid == 1){
+    for(int i = 0;i<m->length;i+=PGSIZE){
+      pte = walkpgdir(pde_idx, (char *)(addr + i), 0);
+      if(pte == 0) return -1;
+
+      uint pte_flag = PTE_FLAGS(*pte);
+
+      if((pte_flag & PTE_P)==0) {
+        // cprintf("Here\n");
+        continue;
+      } // 이미 pte가 초기화된 상황이니까 굳이 안해줘도 됨
+
+      // physical address가져오기
+      uint p_addr = PTE_ADDR(*pte);
+
+      kfree(P2V(p_addr));
+      *pte = 0;
+
+    }
+
+    m->valid = -1;
+    lcr3(V2P(myproc()->pgdir));
+    return 1;
+  }
+  
+  return 0;
 }
+
+  
 
 uint freemem(){
   return freemem_count();

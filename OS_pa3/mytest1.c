@@ -20,6 +20,9 @@ int main(int argc, char *argv[])
 
      // 메모리 매핑
      char *mapped = (char *)mmap(0, size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
+
+     printf(1, "Free memory pages after mmap: %d\n", freemem());
+
      if (mapped == 0)
      {
           printf(2, "mmap failed\n");
@@ -68,6 +71,29 @@ int main(int argc, char *argv[])
      {
           printf(1, "Memory allocation and deallocation successful\n");
      }
+
+     // page alignment 체크 확인
+     int a = 10;
+     printf(1, "---------------- Address Alignment Test with mmap : Align %d----------------\n", a);
+     int m1 = mmap(a, size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
+     if (m1 == 0){
+          printf(1, "Memory mapping failed!\n");
+     }
+
+     printf(1, "---------------- Address Alignment Test with munamp : Align %d----------------\n", a);
+     
+
+     int m2 = mmap(PGSIZE, size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
+     int result = munmap(m2 + a);
+     if(result == 0){
+          printf(1,"Memory unmap failed!\n");
+     }
+     munmap(m1);
+     munmap(m2);
+
+
+     
+     printf(1, "Test 1 Finished\nFree memory pages : %d\n", freemem());
 
      exit();
 }
